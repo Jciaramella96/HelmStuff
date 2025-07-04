@@ -1,0 +1,7 @@
+# XML-style configuration file for sites
+# Site configurations
+site_name=Secondary Site
+site_url=https://secondary.example.com
+site_enabled=true
+ssl_enabled=true
+ssl_cert_path=/etc/ssl/secondary.crt

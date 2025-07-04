@@ -1,0 +1,19 @@
+# Server configuration file for server3
+# Database settings
+db_host=192.168.1.12
+db_port=5432
+db_name=staging
+db_user=admin
+
+# Application settings
+app_name=MyApp
+app_version=1.2.0
+app_debug=false
+max_connections=75
+
+# Cache settings - cache_size missing
+cache_enabled=false
+cache_ttl=3600
+
+# Additional setting only on server3
+backup_enabled=true

@@ -1,0 +1,7 @@
+# XML-style configuration file for sites
+# Site configurations
+site_name=Primary Site
+site_url=https://primary.example.com
+site_enabled=true
+ssl_enabled=true
+ssl_cert_path=/etc/ssl/primary.crt
