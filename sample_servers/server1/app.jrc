@@ -1,0 +1,6 @@
+# Java Runtime Configuration
+# JVM Settings
+java_heap_min=512m
+java_heap_max=2048m
+java_gc_type=G1GC
+java_opts=-Xmx2048m -Xms512m

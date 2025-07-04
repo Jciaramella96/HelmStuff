@@ -1,0 +1,6 @@
+# XML-style configuration file for sites
+# Site configurations
+site_name=Test Site
+site_url=https://test.example.com
+site_enabled=false
+ssl_enabled=false

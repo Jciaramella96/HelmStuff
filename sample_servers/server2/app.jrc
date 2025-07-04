@@ -1,0 +1,6 @@
+# Java Runtime Configuration
+# JVM Settings
+java_heap_min=1024m
+java_heap_max=4096m
+java_gc_type=ParallelGC
+java_opts=-Xmx4096m -Xms1024m
