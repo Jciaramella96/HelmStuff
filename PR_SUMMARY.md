@@ -15,7 +15,8 @@ This PR enhances the configuration file diff tool with two major improvements:
 - **REMOVED**: Individual sheets for each configuration file
 - **ADDED**: Single "All Differences" sheet with all comparisons
 - **ADDED**: "File Name" column as the first column to identify which file each key belongs to
-- **PRESERVED**: Color coding for differences (yellow=missing, red=file not found, orange=different values)
+- **ENHANCED**: Precise cell highlighting - only cells with actual different values are highlighted orange
+- **PRESERVED**: Color coding for errors (yellow=missing, red=file not found)
 
 #### 2. Key Order Preservation
 - **CHANGED**: Keys now appear in the order they exist in configuration files (not alphabetical)
@@ -27,6 +28,12 @@ This PR enhances the configuration file diff tool with two major improvements:
 - **SUPPORTS**: Nested directory structures like `APP/server1/profiles/site.xml`
 - **HANDLES**: Files with same names in different subdirectories
 - **MAINTAINS**: Backward compatibility with flat directory structures
+
+#### 4. Precise Cell Highlighting
+- **SMART HIGHLIGHTING**: Only cells containing actual different values are highlighted orange
+- **MAJORITY LOGIC**: When there's a common/majority value, only minority values are highlighted
+- **IMPROVED UX**: Users can quickly identify exactly which cells contain the differences
+- **EXAMPLE**: If 2 servers have "production" and 1 has "staging", only "staging" is highlighted
 
 ### Technical Implementation Details
 
@@ -203,10 +210,12 @@ python config_diff_tool.py /path/to/APP --output nested_analysis.xlsx
 ## 🎯 Benefits
 
 1. **Better Usability**: All differences on one page for easier comparison
-2. **Enhanced Structure Support**: Handles complex nested directory layouts
-3. **Preserved Context**: File names clearly identify source of each configuration key
-4. **Maintained Order**: Keys appear in original file order for intuitive reading
-5. **Full Compatibility**: Works with existing directory structures
+2. **Precise Visual Feedback**: Only cells with actual differences are highlighted, not entire rows
+3. **Enhanced Structure Support**: Handles complex nested directory layouts
+4. **Preserved Context**: File names clearly identify source of each configuration key
+5. **Maintained Order**: Keys appear in original file order for intuitive reading
+6. **Smart Highlighting**: Majority values remain unhighlighted, minority values stand out
+7. **Full Compatibility**: Works with existing directory structures
 
 ## 🔍 Files Modified
 
