@@ -295,17 +295,43 @@ class ConfigDiffTool:
             ws[f'A{row}'] = diff['file_name']
             ws[f'B{row}'] = diff['key']
             
+            # Determine which values are actually different
+            # Get all non-error values for this key
+            actual_values = [v for v in diff['hosts'].values() 
+                           if v not in ["** MISSING **", "** FILE NOT FOUND **"]]
+            
+            # If there's more than one unique actual value, determine which cells to highlight
+            values_to_highlight = set()
+            if len(set(actual_values)) > 1:
+                # Find the most common value (if any)
+                value_counts = {}
+                for val in actual_values:
+                    value_counts[val] = value_counts.get(val, 0) + 1
+                
+                # If there's a clear majority value, highlight only the minority values
+                # Otherwise, highlight all values that differ from each other
+                max_count = max(value_counts.values()) if value_counts else 0
+                majority_values = [val for val, count in value_counts.items() if count == max_count]
+                
+                if len(majority_values) == 1 and max_count > 1:
+                    # There's a clear majority value, highlight only the different ones
+                    majority_value = majority_values[0]
+                    values_to_highlight = set(val for val in actual_values if val != majority_value)
+                else:
+                    # No clear majority, highlight all different values
+                    values_to_highlight = set(actual_values)
+            
             col = 3
             for host_name in host_names:
                 value = diff['hosts'].get(host_name, "** NOT FOUND **")
                 cell = ws.cell(row=row, column=col, value=value)
                 
-                # Color coding
+                # Color coding - more precise highlighting
                 if value == "** MISSING **":
                     cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")  # Yellow
                 elif value == "** FILE NOT FOUND **":
                     cell.fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")  # Red
-                elif len(diff['unique_values']) > 1:
+                elif value in values_to_highlight:
                     cell.fill = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")  # Orange
                 
                 col += 1
