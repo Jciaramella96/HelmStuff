@@ -14,7 +14,7 @@ import sys
 import argparse
 import logging
 from pathlib import Path
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from typing import Dict, List, Set, Tuple, Any
 import pandas as pd
 from openpyxl import Workbook
@@ -29,9 +29,10 @@ class ConfigDiffTool:
         self.base_directory = Path(base_directory)
         self.output_file = output_file
         self.config_extensions = {'.rc', '.xml', '.jrc'}
-        self.host_configs = defaultdict(dict)  # {host: {filename: {key: value}}}
+        self.host_configs = defaultdict(dict)  # {host: {filename: OrderedDict{key: value}}}
         self.all_files = set()
-        self.all_keys_per_file = defaultdict(set)
+        self.all_keys_per_file = defaultdict(list)  # Changed to list to preserve order
+        self.file_key_order = defaultdict(list)  # Track the order keys appear in each file
         
         # Set up logging
         logging.basicConfig(
@@ -44,17 +45,17 @@ class ConfigDiffTool:
         """Check if a file is a valid configuration file based on extension."""
         return file_path.suffix.lower() in self.config_extensions
     
-    def parse_config_file(self, file_path: Path) -> Dict[str, str]:
+    def parse_config_file(self, file_path: Path) -> OrderedDict[str, str]:
         """
-        Parse a configuration file into key-value pairs.
+        Parse a configuration file into key-value pairs, preserving order.
         
         Args:
             file_path: Path to the configuration file
             
         Returns:
-            Dictionary of key-value pairs
+            OrderedDict of key-value pairs in the order they appear in the file
         """
-        config_data = {}
+        config_data = OrderedDict()
         
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
@@ -113,25 +114,37 @@ class ConfigDiffTool:
                 config_data = self.parse_config_file(config_file)
                 self.host_configs[host_name][file_name] = config_data
                 
-                # Track all keys for this file across all hosts
-                self.all_keys_per_file[file_name].update(config_data.keys())
+                # Track key order for this file (use the first host that has this file)
+                if file_name not in self.file_key_order:
+                    self.file_key_order[file_name] = list(config_data.keys())
+                else:
+                    # Add any new keys that weren't in the first file we saw
+                    existing_keys = set(self.file_key_order[file_name])
+                    for key in config_data.keys():
+                        if key not in existing_keys:
+                            self.file_key_order[file_name].append(key)
+                
+                # Update all keys for this file (maintaining order)
+                for key in config_data.keys():
+                    if key not in self.all_keys_per_file[file_name]:
+                        self.all_keys_per_file[file_name].append(key)
                 
                 self.logger.debug(f"Parsed {file_name} for {host_name}: {len(config_data)} keys")
     
-    def find_differences(self) -> Dict[str, List[Dict[str, Any]]]:
+    def find_differences(self) -> List[Dict[str, Any]]:
         """
         Find differences in configuration values across hosts.
         
         Returns:
-            Dictionary with file names as keys and list of differences as values
+            List of all differences with file name included
         """
-        differences = {}
+        all_differences = []
         
         for file_name in sorted(self.all_files):
-            file_differences = []
-            all_keys = self.all_keys_per_file[file_name]
+            # Use the preserved order instead of sorting
+            all_keys = self.file_key_order[file_name]
             
-            for key in sorted(all_keys):
+            for key in all_keys:
                 # Collect values for this key across all hosts
                 key_values = {}
                 hosts_with_key = []
@@ -154,21 +167,19 @@ class ConfigDiffTool:
                 if len(unique_values) > 1 or len(key_values) != len(hosts_with_key):
                     # There are differences
                     diff_entry = {
+                        'file_name': file_name,
                         'key': key,
                         'hosts': key_values,
                         'unique_values': list(unique_values),
                         'has_missing': "** MISSING **" in key_values.values(),
                         'has_missing_file': "** FILE NOT FOUND **" in key_values.values()
                     }
-                    file_differences.append(diff_entry)
-            
-            if file_differences:
-                differences[file_name] = file_differences
+                    all_differences.append(diff_entry)
                 
-        return differences
+        return all_differences
     
-    def create_excel_report(self, differences: Dict[str, List[Dict[str, Any]]]) -> None:
-        """Create an Excel report with the differences found."""
+    def create_excel_report(self, differences: List[Dict[str, Any]]) -> None:
+        """Create an Excel report with all differences on one sheet."""
         wb = Workbook()
         
         # Remove default worksheet
@@ -178,14 +189,10 @@ class ConfigDiffTool:
         summary_ws = wb.create_sheet("Summary")
         self._create_summary_sheet(summary_ws, differences)
         
-        # Create worksheet for each file with differences
-        for file_name, file_diffs in differences.items():
-            # Clean filename for worksheet name (Excel has limitations)
-            sheet_name = file_name[:27] + "..." if len(file_name) > 30 else file_name
-            sheet_name = sheet_name.replace('/', '_').replace('\\', '_')
-            
-            ws = wb.create_sheet(sheet_name)
-            self._create_file_diff_sheet(ws, file_name, file_diffs)
+        # Create single consolidated differences worksheet
+        if differences:
+            diff_ws = wb.create_sheet("All Differences")
+            self._create_consolidated_diff_sheet(diff_ws, differences)
         
         # Create host overview worksheet
         overview_ws = wb.create_sheet("Host Overview")
@@ -195,7 +202,7 @@ class ConfigDiffTool:
         wb.save(self.output_file)
         self.logger.info(f"Excel report saved to: {self.output_file}")
     
-    def _create_summary_sheet(self, ws, differences: Dict[str, List[Dict[str, Any]]]) -> None:
+    def _create_summary_sheet(self, ws, differences: List[Dict[str, Any]]) -> None:
         """Create the summary worksheet."""
         ws.title = "Summary"
         
@@ -213,37 +220,53 @@ class ConfigDiffTool:
         row += 1
         ws[f'A{row}'] = f"Total config files: {len(self.all_files)}"
         row += 1
-        ws[f'A{row}'] = f"Files with differences: {len(differences)}"
+        
+        # Count files with differences
+        files_with_diffs = set(diff['file_name'] for diff in differences)
+        ws[f'A{row}'] = f"Files with differences: {len(files_with_diffs)}"
+        row += 1
+        ws[f'A{row}'] = f"Total differences found: {len(differences)}"
         row += 2
         
         # Files with differences
-        ws[f'A{row}'] = "Files with differences:"
-        ws[f'A{row}'].font = Font(bold=True)
-        row += 1
-        
-        ws[f'A{row}'] = "File Name"
-        ws[f'B{row}'] = "Keys with Differences"
-        ws[f'A{row}'].font = Font(bold=True)
-        ws[f'B{row}'].font = Font(bold=True)
-        row += 1
-        
-        for file_name, file_diffs in differences.items():
-            ws[f'A{row}'] = file_name
-            ws[f'B{row}'] = len(file_diffs)
+        if files_with_diffs:
+            ws[f'A{row}'] = "Files with differences:"
+            ws[f'A{row}'].font = Font(bold=True)
             row += 1
+            
+            ws[f'A{row}'] = "File Name"
+            ws[f'B{row}'] = "Keys with Differences"
+            ws[f'A{row}'].font = Font(bold=True)
+            ws[f'B{row}'].font = Font(bold=True)
+            row += 1
+            
+            # Count differences per file
+            file_diff_counts = {}
+            for diff in differences:
+                file_name = diff['file_name']
+                file_diff_counts[file_name] = file_diff_counts.get(file_name, 0) + 1
+            
+            for file_name in sorted(file_diff_counts.keys()):
+                ws[f'A{row}'] = file_name
+                ws[f'B{row}'] = file_diff_counts[file_name]
+                row += 1
     
-    def _create_file_diff_sheet(self, ws, file_name: str, file_diffs: List[Dict[str, Any]]) -> None:
-        """Create a worksheet for a specific file's differences."""
+    def _create_consolidated_diff_sheet(self, ws, differences: List[Dict[str, Any]]) -> None:
+        """Create a single worksheet with all differences."""
+        ws.title = "All Differences"
+        
         # Header
-        ws['A1'] = f"Differences in: {file_name}"
+        ws['A1'] = "All Configuration Differences"
         ws['A1'].font = Font(bold=True, size=12)
         
         # Column headers
         row = 3
-        ws[f'A{row}'] = "Key"
+        ws[f'A{row}'] = "File Name"
+        ws[f'B{row}'] = "Key"
         ws[f'A{row}'].font = Font(bold=True)
+        ws[f'B{row}'].font = Font(bold=True)
         
-        col = 2
+        col = 3
         host_names = sorted(self.host_configs.keys())
         for host_name in host_names:
             ws.cell(row=row, column=col, value=host_name)
@@ -252,10 +275,11 @@ class ConfigDiffTool:
         
         # Data rows
         row += 1
-        for diff in file_diffs:
-            ws[f'A{row}'] = diff['key']
+        for diff in differences:
+            ws[f'A{row}'] = diff['file_name']
+            ws[f'B{row}'] = diff['key']
             
-            col = 2
+            col = 3
             for host_name in host_names:
                 value = diff['hosts'].get(host_name, "** NOT FOUND **")
                 cell = ws.cell(row=row, column=col, value=value)
@@ -321,7 +345,7 @@ class ConfigDiffTool:
                 wb.save(self.output_file)
             else:
                 # Create Excel report
-                self.logger.info(f"Found differences in {len(differences)} files")
+                self.logger.info(f"Found {len(differences)} total differences")
                 self.create_excel_report(differences)
             
             self.logger.info("Analysis complete!")
