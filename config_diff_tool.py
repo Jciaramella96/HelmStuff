@@ -75,16 +75,22 @@ class ConfigDiffTool:
             
         normalized = value
         
-        # Conservative patterns - only match clear hostname patterns with numeric variations
+        # Ultra-conservative patterns - only match very clear standalone hostname patterns
         patterns_and_replacements = [
-            # Complex hostnames with dashes and numeric suffixes: abptop-jjj-1, server-web-01, my-host-name-123, etc.
-            (r'\b([a-zA-Z][a-zA-Z\-_]*?)(\d+)\b', r'\1X'),
-            # IP addresses with last octet variation: 192.168.1.100 -> 192.168.1.X
+            # IP addresses with last octet variation: 192.168.1.100 -> 192.168.1.X (most reliable)
             (r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.)(\d{1,3})\b', r'\1X'),
-            # FQDNs with numeric prefixes: server1.domain.com, abptop-jjj-1.example.com -> serverX.domain.com, abptop-jjj-X.example.com
-            (r'\b([a-zA-Z][a-zA-Z\-_]*?)(\d+)(\.[\w\.\-]+)\b', r'\1X\3'),
-            # URLs with numeric hostnames: http://server1/path, https://abptop-jjj-1/api -> http://serverX/path, https://abptop-jjj-X/api
+            
+            # FQDNs with numeric prefixes: server1.domain.com, abptop-jjj-1.example.com -> serverX.domain.com
+            (r'\b([a-zA-Z][a-zA-Z\-_]*?)(\d+)(\.[\w\.\-]+\.[a-zA-Z]{2,})\b', r'\1X\3'),
+            
+            # URLs with numeric hostnames: http://server1/path, https://abptop-jjj-1/api -> http://serverX/path
             (r'(https?://[a-zA-Z][a-zA-Z\-_]*?)(\d+)(/|\.|:)', r'\1X\3'),
+            
+            # Standalone hostnames with common prefixes (not in paths)
+            (r'(?<![/\\])\b((?:server|host|node|db|web|app|api|cache|redis|mongo|mysql|postgres|oracle|elastic|kafka|abptop)[a-zA-Z\-_]*?)(\d+)\b(?![/\\\.])', r'\1X'),
+            
+            # Simple standalone hostnames only at value boundaries (not in paths or complex strings)
+            (r'(?:^|=\s*)([a-zA-Z]+[a-zA-Z\-_]*?)(\d+)(?=\s*$|,\s*)', r'\1X'),
         ]
         
         # Apply patterns
