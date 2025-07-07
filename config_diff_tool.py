@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+THIS SHOULD BE A LINTER ERROR#!/usr/bin/env python3
 """
 Configuration Diff Tool
 
@@ -75,22 +75,15 @@ class ConfigDiffTool:
             
         normalized = value
         
-        # Ultra-conservative patterns - only match very clear standalone hostname patterns
+        # Very specific pattern - only match the exact format: letters-letters-number(s)
+        # Only when quoted or as standalone words (not part of filenames or complex strings)
         patterns_and_replacements = [
-            # IP addresses with last octet variation: 192.168.1.100 -> 192.168.1.X (most reliable)
-            (r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.)(\d{1,3})\b', r'\1X'),
+            # Quoted hostnames in format: "letters-letters-number(s)" -> "letters-letters-X"
+            (r'"([a-zA-Z]+-[a-zA-Z]+-)\d+"', r'"\1X"'),
             
-            # FQDNs with numeric prefixes: server1.domain.com, abptop-jjj-1.example.com -> serverX.domain.com
-            (r'\b([a-zA-Z][a-zA-Z\-_]*?)(\d+)(\.[\w\.\-]+\.[a-zA-Z]{2,})\b', r'\1X\3'),
-            
-            # URLs with numeric hostnames: http://server1/path, https://abptop-jjj-1/api -> http://serverX/path
-            (r'(https?://[a-zA-Z][a-zA-Z\-_]*?)(\d+)(/|\.|:)', r'\1X\3'),
-            
-            # Standalone hostnames with common prefixes (not in paths)
-            (r'(?<![/\\])\b((?:server|host|node|db|web|app|api|cache|redis|mongo|mysql|postgres|oracle|elastic|kafka|abptop)[a-zA-Z\-_]*?)(\d+)\b(?![/\\\.])', r'\1X'),
-            
-            # Simple standalone hostnames only at value boundaries (not in paths or complex strings)
-            (r'(?:^|=\s*)([a-zA-Z]+[a-zA-Z\-_]*?)(\d+)(?=\s*$|,\s*)', r'\1X'),
+            # Standalone hostnames in format: letters-letters-number(s) -> letters-letters-X
+            # Must be complete standalone words, not part of paths, filenames, or longer strings
+            (r'\b([a-zA-Z]+-[a-zA-Z]+-)\d+\b(?![/\\=\.\-])', r'\1X'),
         ]
         
         # Apply patterns
@@ -262,8 +255,8 @@ class ConfigDiffTool:
                         if self._values_differ_ignoring_hostnames(actual_values):
                             has_differences = True
                         else:
-                            # Differences are only due to hostname numeric variations, skip this entry
-                            self.logger.debug(f"Skipping hostname numeric variation difference for {file_name}:{key}")
+                            # Differences are only due to hostname format variations, skip this entry
+                            self.logger.debug(f"Skipping hostname format variation difference for {file_name}:{key}")
                     else:
                         has_differences = True
                 
@@ -332,7 +325,7 @@ class ConfigDiffTool:
         row += 1
         
         if self.ignore_hostnames:
-            ws[f'A{row}'] = "Hostname normalization: ENABLED (numeric hostname variations ignored)"
+            ws[f'A{row}'] = "Hostname normalization: ENABLED (letters-letters-number format variations ignored)"
             ws[f'A{row}'].font = Font(italic=True)
         else:
             ws[f'A{row}'] = "Hostname normalization: DISABLED (all differences shown)"
@@ -527,7 +520,7 @@ Examples:
     parser.add_argument(
         '--ignore-hostnames',
         action='store_true',
-        help='Ignore differences that are only due to hostname numeric variations (e.g., server1 vs server2, hostname12 vs hostname13)'
+        help='Ignore differences that are only due to hostname variations in format letters-letters-number (e.g., abptop-jjj-1 vs abptop-jjj-2) when quoted or standalone'
     )
     
     args = parser.parse_args()
@@ -548,7 +541,7 @@ Examples:
         print(f"\nReport generated successfully: {args.output}")
         
         if args.ignore_hostnames:
-            print("Note: Hostname numeric variation differences were ignored during comparison")
+            print("Note: Hostname differences in letters-letters-number format were ignored during comparison")
         
     except Exception as e:
         print(f"Error: {e}")
