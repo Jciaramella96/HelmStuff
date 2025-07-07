@@ -1,9 +1,0 @@
-# Database configuration for server2
-db_host=db2.example.com
-db_port=5432
-db_url=jdbc:postgresql://db2.example.com:5432/myapp
-cache_servers=redis3.internal.com,redis4.internal.com
-api_endpoint=https://api2.example.com/v1
-backup_server=192.168.1.101
-timeout=30
-max_connections=100
