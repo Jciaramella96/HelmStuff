@@ -15,13 +15,14 @@ Directory Structure Example:
         rc/mongo.rc
 
 Usage:
-    python config_diff_tool.py <directory_path> [--output output.xlsx] [--verbose]
+    python config_diff_tool.py <directory_path> [--output output.xlsx] [--verbose] [--ignore-hostnames]
 """
 
 import os
 import sys
 import argparse
 import logging
+import re
 from pathlib import Path
 from collections import defaultdict, OrderedDict
 from typing import Dict, List, Set, Tuple, Any
@@ -34,14 +35,28 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 class ConfigDiffTool:
     """Main class for comparing configuration files across server directories."""
     
-    def __init__(self, base_directory: str, output_file: str = "config_diff_report.xlsx"):
+    def __init__(self, base_directory: str, output_file: str = "config_diff_report.xlsx", 
+                 ignore_hostnames: bool = False):
         self.base_directory = Path(base_directory)
         self.output_file = output_file
+        self.ignore_hostnames = ignore_hostnames
         self.config_extensions = {'.rc', '.xml', '.jrc'}
         self.host_configs = defaultdict(dict)  # {host: {filename: OrderedDict{key: value}}}
         self.all_files = set()
         self.all_keys_per_file = defaultdict(list)  # Changed to list to preserve order
         self.file_key_order = defaultdict(list)  # Track the order keys appear in each file
+        
+        # Hostname detection patterns
+        self._hostname_patterns = [
+            # IP addresses (IPv4)
+            r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b',
+            # FQDNs and domain names
+            r'\b[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+\b',
+            # Simple hostnames (server names, etc.)
+            r'\b[a-zA-Z][a-zA-Z0-9\-]*[0-9]+[a-zA-Z0-9\-]*\b',  # Contains letters and numbers (like server1, web-01)
+            r'\b(?:server|host|node|db|web|app|api|cache|redis|mongo|mysql|postgres|oracle|elastic|kafka)[a-zA-Z0-9\-]*\b',  # Common server prefixes
+        ]
+        self._compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in self._hostname_patterns]
         
         # Set up logging
         logging.basicConfig(
@@ -53,6 +68,54 @@ class ConfigDiffTool:
     def is_valid_config_file(self, file_path: Path) -> bool:
         """Check if a file is a valid configuration file based on extension."""
         return file_path.suffix.lower() in self.config_extensions
+    
+    def _normalize_hostnames(self, value: str) -> str:
+        """
+        Normalize a configuration value by replacing detected hostnames with placeholders.
+        
+        Args:
+            value: The configuration value to normalize
+            
+        Returns:
+            Normalized value with hostnames replaced by [HOSTNAME]
+        """
+        if not value or not isinstance(value, str):
+            return value
+            
+        normalized = value
+        
+        # Apply each hostname pattern
+        for pattern in self._compiled_patterns:
+            normalized = pattern.sub('[HOSTNAME]', normalized)
+        
+        return normalized
+    
+    def _values_differ_ignoring_hostnames(self, values: List[str]) -> bool:
+        """
+        Check if values differ when ignoring hostname differences.
+        
+        Args:
+            values: List of configuration values to compare
+            
+        Returns:
+            True if values differ after normalizing hostnames, False otherwise
+        """
+        if not values:
+            return False
+            
+        # Filter out error values
+        actual_values = [v for v in values if v not in ["** MISSING **", "** FILE NOT FOUND **"]]
+        
+        if len(actual_values) <= 1:
+            return False
+            
+        # Normalize all values
+        normalized_values = [self._normalize_hostnames(v) for v in actual_values]
+        
+        # Check if normalized values are all the same
+        unique_normalized = set(normalized_values)
+        
+        return len(unique_normalized) > 1
     
     def parse_config_file(self, file_path: Path) -> OrderedDict[str, str]:
         """
@@ -180,15 +243,30 @@ class ConfigDiffTool:
                 unique_values = set(v for v in key_values.values() 
                                   if v not in ["** MISSING **", "** FILE NOT FOUND **"])
                 
+                has_differences = False
+                
                 if len(unique_values) > 1 or len(key_values) != len(hosts_with_key):
-                    # There are differences
+                    # There are potential differences
+                    if self.ignore_hostnames:
+                        # Check if differences are only due to hostnames
+                        actual_values = list(unique_values)
+                        if self._values_differ_ignoring_hostnames(actual_values):
+                            has_differences = True
+                        else:
+                            # Differences are only due to hostnames, skip this entry
+                            self.logger.debug(f"Skipping hostname-only difference for {file_name}:{key}")
+                    else:
+                        has_differences = True
+                
+                if has_differences:
                     diff_entry = {
                         'file_name': file_name,
                         'key': key,
                         'hosts': key_values,
                         'unique_values': list(unique_values),
                         'has_missing': "** MISSING **" in key_values.values(),
-                        'has_missing_file': "** FILE NOT FOUND **" in key_values.values()
+                        'has_missing_file': "** FILE NOT FOUND **" in key_values.values(),
+                        'hostname_normalized': self.ignore_hostnames
                     }
                     all_differences.append(diff_entry)
                 
@@ -242,6 +320,14 @@ class ConfigDiffTool:
         ws[f'A{row}'] = f"Files with differences: {len(files_with_diffs)}"
         row += 1
         ws[f'A{row}'] = f"Total differences found: {len(differences)}"
+        row += 1
+        
+        if self.ignore_hostnames:
+            ws[f'A{row}'] = "Hostname normalization: ENABLED (hostname-only differences ignored)"
+            ws[f'A{row}'].font = Font(italic=True)
+        else:
+            ws[f'A{row}'] = "Hostname normalization: DISABLED (all differences shown)"
+            ws[f'A{row}'].font = Font(italic=True)
         row += 2
         
         # Files with differences
@@ -407,6 +493,8 @@ Examples:
   python config_diff_tool.py /path/to/servers
   python config_diff_tool.py /path/to/servers --output my_report.xlsx
   python config_diff_tool.py /path/to/servers --verbose
+  python config_diff_tool.py /path/to/servers --ignore-hostnames
+  python config_diff_tool.py /path/to/servers --ignore-hostnames --verbose
         """
     )
     
@@ -427,6 +515,12 @@ Examples:
         help='Enable verbose logging'
     )
     
+    parser.add_argument(
+        '--ignore-hostnames',
+        action='store_true',
+        help='Ignore differences that are only due to hostname variations (IPs, FQDNs, server names)'
+    )
+    
     args = parser.parse_args()
     
     # Set logging level
@@ -440,9 +534,12 @@ Examples:
     
     # Run the tool
     try:
-        tool = ConfigDiffTool(args.directory, args.output)
+        tool = ConfigDiffTool(args.directory, args.output, args.ignore_hostnames)
         tool.run()
         print(f"\nReport generated successfully: {args.output}")
+        
+        if args.ignore_hostnames:
+            print("Note: Hostname-only differences were ignored during comparison")
         
     except Exception as e:
         print(f"Error: {e}")
