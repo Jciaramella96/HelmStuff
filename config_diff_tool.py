@@ -2,8 +2,17 @@
 """
 Configuration Diff Tool
 
-A tool to compare configuration files across multiple server directories
-and report differences in an Excel format.
+A tool to recursively compare configuration files across multiple server directories
+and report differences in an Excel format. Supports nested directory structures.
+
+Directory Structure Example:
+    APP/
+      server1/
+        profiles/site.xml
+        rc/mongo.rc
+      server2/
+        profiles/site.xml
+        rc/mongo.rc
 
 Usage:
     python config_diff_tool.py <directory_path> [--output output.xlsx] [--verbose]
@@ -82,13 +91,13 @@ class ConfigDiffTool:
         return config_data
     
     def scan_directories(self) -> None:
-        """Scan the base directory for host subdirectories and their config files."""
+        """Recursively scan the base directory for host subdirectories and their config files."""
         if not self.base_directory.exists():
             raise FileNotFoundError(f"Directory {self.base_directory} does not exist")
         
-        self.logger.info(f"Scanning directory: {self.base_directory}")
+        self.logger.info(f"Recursively scanning directory: {self.base_directory}")
         
-        # Find all subdirectories (host directories)
+        # Find all subdirectories (host directories) at the first level
         host_directories = [d for d in self.base_directory.iterdir() 
                           if d.is_dir() and not d.name.startswith('.')]
         
@@ -97,39 +106,46 @@ class ConfigDiffTool:
         
         self.logger.info(f"Found {len(host_directories)} host directories")
         
-        # Process each host directory
+        # Process each host directory recursively
         for host_dir in host_directories:
             host_name = host_dir.name
             self.logger.info(f"Processing host: {host_name}")
             
-            # Find all config files in this host directory
-            config_files = [f for f in host_dir.iterdir() 
-                          if f.is_file() and self.is_valid_config_file(f)]
-            
-            for config_file in config_files:
-                file_name = config_file.name
-                self.all_files.add(file_name)
-                
-                # Parse the configuration file
-                config_data = self.parse_config_file(config_file)
-                self.host_configs[host_name][file_name] = config_data
-                
-                # Track key order for this file (use the first host that has this file)
-                if file_name not in self.file_key_order:
-                    self.file_key_order[file_name] = list(config_data.keys())
-                else:
-                    # Add any new keys that weren't in the first file we saw
-                    existing_keys = set(self.file_key_order[file_name])
+            # Recursively find all config files in this host directory and subdirectories
+            config_files_found = 0
+            for config_file in host_dir.rglob('*'):
+                if config_file.is_file() and self.is_valid_config_file(config_file):
+                    # Get the relative path from the host directory to maintain file identity
+                    relative_path = config_file.relative_to(host_dir)
+                    
+                    # Use the full relative path as file identifier to handle files with same name in different subdirs
+                    file_identifier = str(relative_path).replace('\\', '/')  # Normalize path separators
+                    
+                    self.all_files.add(file_identifier)
+                    config_files_found += 1
+                    
+                    # Parse the configuration file
+                    config_data = self.parse_config_file(config_file)
+                    self.host_configs[host_name][file_identifier] = config_data
+                    
+                    # Track key order for this file (use the first host that has this file)
+                    if file_identifier not in self.file_key_order:
+                        self.file_key_order[file_identifier] = list(config_data.keys())
+                    else:
+                        # Add any new keys that weren't in the first file we saw
+                        existing_keys = set(self.file_key_order[file_identifier])
+                        for key in config_data.keys():
+                            if key not in existing_keys:
+                                self.file_key_order[file_identifier].append(key)
+                    
+                    # Update all keys for this file (maintaining order)
                     for key in config_data.keys():
-                        if key not in existing_keys:
-                            self.file_key_order[file_name].append(key)
-                
-                # Update all keys for this file (maintaining order)
-                for key in config_data.keys():
-                    if key not in self.all_keys_per_file[file_name]:
-                        self.all_keys_per_file[file_name].append(key)
-                
-                self.logger.debug(f"Parsed {file_name} for {host_name}: {len(config_data)} keys")
+                        if key not in self.all_keys_per_file[file_identifier]:
+                            self.all_keys_per_file[file_identifier].append(key)
+                    
+                    self.logger.debug(f"Parsed {file_identifier} for {host_name}: {len(config_data)} keys")
+            
+            self.logger.info(f"Found {config_files_found} config files in {host_name}")
     
     def find_differences(self) -> List[Dict[str, Any]]:
         """
