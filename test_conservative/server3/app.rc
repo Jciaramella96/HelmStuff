@@ -1,0 +1,10 @@
+# Application configuration for server3
+db_host=database3
+web_server=web03.example.com
+api_url=https://api3.internal/v1
+backup_ip=192.168.1.103
+timeout=30
+max_connections=200
+log_level=ERROR
+cache_host=cache3
+different_setting=staging

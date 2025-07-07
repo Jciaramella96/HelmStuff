@@ -46,17 +46,7 @@ class ConfigDiffTool:
         self.all_keys_per_file = defaultdict(list)  # Changed to list to preserve order
         self.file_key_order = defaultdict(list)  # Track the order keys appear in each file
         
-        # Hostname detection patterns
-        self._hostname_patterns = [
-            # IP addresses (IPv4)
-            r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b',
-            # FQDNs and domain names
-            r'\b[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+\b',
-            # Simple hostnames (server names, etc.)
-            r'\b[a-zA-Z][a-zA-Z0-9\-]*[0-9]+[a-zA-Z0-9\-]*\b',  # Contains letters and numbers (like server1, web-01)
-            r'\b(?:server|host|node|db|web|app|api|cache|redis|mongo|mysql|postgres|oracle|elastic|kafka)[a-zA-Z0-9\-]*\b',  # Common server prefixes
-        ]
-        self._compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in self._hostname_patterns]
+
         
         # Set up logging
         logging.basicConfig(
@@ -71,22 +61,35 @@ class ConfigDiffTool:
     
     def _normalize_hostnames(self, value: str) -> str:
         """
-        Normalize a configuration value by replacing detected hostnames with placeholders.
+        Normalize a configuration value by replacing hostname numeric variations.
+        Only normalizes clear patterns like hostname12 -> hostnameX, server01 -> serverX, etc.
         
         Args:
             value: The configuration value to normalize
             
         Returns:
-            Normalized value with hostnames replaced by [HOSTNAME]
+            Normalized value with hostname numeric variations standardized
         """
         if not value or not isinstance(value, str):
             return value
             
         normalized = value
         
-        # Apply each hostname pattern
-        for pattern in self._compiled_patterns:
-            normalized = pattern.sub('[HOSTNAME]', normalized)
+        # Conservative patterns - only match clear hostname patterns with numeric variations
+        patterns_and_replacements = [
+            # Simple hostnames with numeric suffixes: server1, web-01, db02, hostname12, etc.
+            (r'\b([a-zA-Z][a-zA-Z\-_]*?)(\d+)\b', r'\1X'),
+            # IP addresses with last octet variation: 192.168.1.100 -> 192.168.1.X
+            (r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.)(\d{1,3})\b', r'\1X'),
+            # FQDNs with numeric prefixes: server1.domain.com -> serverX.domain.com
+            (r'\b([a-zA-Z][a-zA-Z\-_]*?)(\d+)(\.[\w\.\-]+)\b', r'\1X\3'),
+            # URLs with numeric hostnames: http://server1/path -> http://serverX/path
+            (r'(https?://[a-zA-Z][a-zA-Z\-_]*?)(\d+)(/|\.|:)', r'\1X\3'),
+        ]
+        
+        # Apply patterns
+        for pattern, replacement in patterns_and_replacements:
+            normalized = re.sub(pattern, replacement, normalized)
         
         return normalized
     
@@ -253,8 +256,8 @@ class ConfigDiffTool:
                         if self._values_differ_ignoring_hostnames(actual_values):
                             has_differences = True
                         else:
-                            # Differences are only due to hostnames, skip this entry
-                            self.logger.debug(f"Skipping hostname-only difference for {file_name}:{key}")
+                            # Differences are only due to hostname numeric variations, skip this entry
+                            self.logger.debug(f"Skipping hostname numeric variation difference for {file_name}:{key}")
                     else:
                         has_differences = True
                 
@@ -323,7 +326,7 @@ class ConfigDiffTool:
         row += 1
         
         if self.ignore_hostnames:
-            ws[f'A{row}'] = "Hostname normalization: ENABLED (hostname-only differences ignored)"
+            ws[f'A{row}'] = "Hostname normalization: ENABLED (numeric hostname variations ignored)"
             ws[f'A{row}'].font = Font(italic=True)
         else:
             ws[f'A{row}'] = "Hostname normalization: DISABLED (all differences shown)"
@@ -518,7 +521,7 @@ Examples:
     parser.add_argument(
         '--ignore-hostnames',
         action='store_true',
-        help='Ignore differences that are only due to hostname variations (IPs, FQDNs, server names)'
+        help='Ignore differences that are only due to hostname numeric variations (e.g., server1 vs server2, hostname12 vs hostname13)'
     )
     
     args = parser.parse_args()
@@ -539,7 +542,7 @@ Examples:
         print(f"\nReport generated successfully: {args.output}")
         
         if args.ignore_hostnames:
-            print("Note: Hostname-only differences were ignored during comparison")
+            print("Note: Hostname numeric variation differences were ignored during comparison")
         
     except Exception as e:
         print(f"Error: {e}")
