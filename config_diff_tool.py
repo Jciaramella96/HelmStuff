@@ -1,4 +1,4 @@
-THIS SHOULD BE A LINTER ERROR#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Configuration Diff Tool
 
@@ -61,14 +61,15 @@ class ConfigDiffTool:
     
     def _normalize_hostnames(self, value: str) -> str:
         """
-        Normalize a configuration value by replacing hostname numeric variations.
-        Only normalizes clear patterns like hostname12 -> hostnameX, server01 -> serverX, etc.
+        Normalize a configuration value by replacing hostname variations in letters-letters-number format.
+        Only normalizes specific pattern: letters-letters-number (e.g., abptop-jjj-1 -> abptop-jjj-X).
+        Only applies when hostnames are quoted or standalone words.
         
         Args:
             value: The configuration value to normalize
             
         Returns:
-            Normalized value with hostname numeric variations standardized
+            Normalized value with hostname format variations standardized
         """
         if not value or not isinstance(value, str):
             return value
