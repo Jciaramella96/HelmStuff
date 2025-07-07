@@ -77,13 +77,13 @@ class ConfigDiffTool:
         
         # Conservative patterns - only match clear hostname patterns with numeric variations
         patterns_and_replacements = [
-            # Simple hostnames with numeric suffixes: server1, web-01, db02, hostname12, etc.
+            # Complex hostnames with dashes and numeric suffixes: abptop-jjj-1, server-web-01, my-host-name-123, etc.
             (r'\b([a-zA-Z][a-zA-Z\-_]*?)(\d+)\b', r'\1X'),
             # IP addresses with last octet variation: 192.168.1.100 -> 192.168.1.X
             (r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.)(\d{1,3})\b', r'\1X'),
-            # FQDNs with numeric prefixes: server1.domain.com -> serverX.domain.com
+            # FQDNs with numeric prefixes: server1.domain.com, abptop-jjj-1.example.com -> serverX.domain.com, abptop-jjj-X.example.com
             (r'\b([a-zA-Z][a-zA-Z\-_]*?)(\d+)(\.[\w\.\-]+)\b', r'\1X\3'),
-            # URLs with numeric hostnames: http://server1/path -> http://serverX/path
+            # URLs with numeric hostnames: http://server1/path, https://abptop-jjj-1/api -> http://serverX/path, https://abptop-jjj-X/api
             (r'(https?://[a-zA-Z][a-zA-Z\-_]*?)(\d+)(/|\.|:)', r'\1X\3'),
         ]
         
