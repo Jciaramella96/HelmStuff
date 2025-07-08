@@ -61,8 +61,8 @@ class ConfigDiffTool:
     
     def _normalize_hostnames(self, value: str) -> str:
         """
-        Normalize a configuration value by replacing hostname variations in letters-letters-number format.
-        Only normalizes specific pattern: letters-letters-number (e.g., abptop-jjj-1 -> abptop-jjj-X).
+        Normalize a configuration value by replacing hostname variations using custom pattern.
+        Pattern: a(t|p)[chars]-(b|h|c|p)-[chars]-digits (e.g., atprod-b-server-1 -> atprod-b-server-X).
         Only applies when hostnames are quoted or standalone words, and NOT when # symbols are present.
         
         Args:
@@ -80,14 +80,15 @@ class ConfigDiffTool:
             
         normalized = value
         
-        # Simple, reliable patterns - only match exact format: letters-letters-number
+        # Custom hostname patterns based on: a(t|p)…-(b|h|c|p)-…-\d
+        # Interpreting … as [a-zA-Z]* for alphanumeric characters
         patterns_and_replacements = [
-            # Quoted hostnames in format: "letters-letters-number" -> "letters-letters-X"
-            (r'"([a-zA-Z]+-[a-zA-Z]+-)\d+"', r'"\1X"'),
+            # Quoted hostnames in custom format: "a(t|p)[chars]-(b|h|c|p)-[chars]-digits" -> "a(t|p)[chars]-(b|h|c|p)-[chars]-X"
+            (r'"(a(t|p)[a-zA-Z]*-(b|h|c|p)-[a-zA-Z]*-)\d+"', r'"\1X"'),
             
-            # Standalone hostnames in exact format: letters-letters-number -> letters-letters-X
+            # Standalone hostnames in custom format: a(t|p)[chars]-(b|h|c|p)-[chars]-digits -> a(t|p)[chars]-(b|h|c|p)-[chars]-X
             # Must be complete standalone words, not part of paths or complex strings
-            (r'\b([a-zA-Z]+-[a-zA-Z]+-)\d+\b(?![/\\=\.\-])', r'\1X'),
+            (r'\b(a(t|p)[a-zA-Z]*-(b|h|c|p)-[a-zA-Z]*-)\d+\b(?![/\\=\.\-])', r'\1X'),
         ]
         
         # Apply patterns
@@ -251,16 +252,24 @@ class ConfigDiffTool:
                 
                 has_differences = False
                 
-                if len(unique_values) > 1 or len(key_values) != len(hosts_with_key):
+                # Check for missing files or missing keys - these should always be reported
+                # regardless of hostname normalization since they represent structural differences
+                has_missing_files_or_keys = len(key_values) != len(hosts_with_key)
+                
+                if len(unique_values) > 1 or has_missing_files_or_keys:
                     # There are potential differences
                     if self.ignore_hostnames:
-                        # Check if differences are only due to hostnames
-                        actual_values = list(unique_values)
-                        if self._values_differ_ignoring_hostnames(actual_values):
+                        # If there are missing files or keys, always report the difference
+                        if has_missing_files_or_keys:
                             has_differences = True
                         else:
-                            # Differences are only due to hostname format variations, skip this entry
-                            self.logger.debug(f"Skipping hostname format variation difference for {file_name}:{key}")
+                            # Only check hostname normalization if all hosts have actual values
+                            actual_values = list(unique_values)
+                            if self._values_differ_ignoring_hostnames(actual_values):
+                                has_differences = True
+                            else:
+                                # Differences are only due to hostname format variations, skip this entry
+                                self.logger.debug(f"Skipping hostname format variation difference for {file_name}:{key}")
                     else:
                         has_differences = True
                 
@@ -329,7 +338,7 @@ class ConfigDiffTool:
         row += 1
         
         if self.ignore_hostnames:
-            ws[f'A{row}'] = "Hostname normalization: ENABLED (letters-letters-number format variations ignored)"
+            ws[f'A{row}'] = "Hostname normalization: ENABLED (a(t|p)[chars]-(b|h|c|p)-[chars]-digits format variations ignored)"
             ws[f'A{row}'].font = Font(italic=True)
         else:
             ws[f'A{row}'] = "Hostname normalization: DISABLED (all differences shown)"
@@ -524,7 +533,7 @@ Examples:
     parser.add_argument(
         '--ignore-hostnames',
         action='store_true',
-        help='Ignore differences that are only due to hostname variations in format letters-letters-number (e.g., abptop-jjj-1 vs abptop-jjj-2) when quoted or standalone'
+        help='Ignore differences that are only due to hostname variations in format a(t|p)[chars]-(b|h|c|p)-[chars]-digits (e.g., atprod-b-server-1 vs atprod-b-server-2) when quoted or standalone'
     )
     
     args = parser.parse_args()
@@ -545,7 +554,7 @@ Examples:
         print(f"\nReport generated successfully: {args.output}")
         
         if args.ignore_hostnames:
-            print("Note: Hostname differences in letters-letters-number format were ignored during comparison")
+            print("Note: Hostname differences in a(t|p)[chars]-(b|h|c|p)-[chars]-digits format were ignored during comparison")
         
     except Exception as e:
         print(f"Error: {e}")
