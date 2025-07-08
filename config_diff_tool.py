@@ -63,7 +63,7 @@ class ConfigDiffTool:
         """
         Normalize a configuration value by replacing hostname variations in letters-letters-number format.
         Only normalizes specific pattern: letters-letters-number (e.g., abptop-jjj-1 -> abptop-jjj-X).
-        Only applies when hostnames are quoted or standalone words.
+        Only applies when hostnames are quoted or standalone words, and NOT when # symbols are present.
         
         Args:
             value: The configuration value to normalize
@@ -73,17 +73,20 @@ class ConfigDiffTool:
         """
         if not value or not isinstance(value, str):
             return value
+        
+        # Do NOT normalize anything that contains # symbols (comments, special markers, etc.)
+        if '#' in value:
+            return value
             
         normalized = value
         
-        # Very specific pattern - only match the exact format: letters-letters-number(s)
-        # Only when quoted or as standalone words (not part of filenames or complex strings)
+        # Simple, reliable patterns - only match exact format: letters-letters-number
         patterns_and_replacements = [
-            # Quoted hostnames in format: "letters-letters-number(s)" -> "letters-letters-X"
+            # Quoted hostnames in format: "letters-letters-number" -> "letters-letters-X"
             (r'"([a-zA-Z]+-[a-zA-Z]+-)\d+"', r'"\1X"'),
             
-            # Standalone hostnames in format: letters-letters-number(s) -> letters-letters-X
-            # Must be complete standalone words, not part of paths, filenames, or longer strings
+            # Standalone hostnames in exact format: letters-letters-number -> letters-letters-X
+            # Must be complete standalone words, not part of paths or complex strings
             (r'\b([a-zA-Z]+-[a-zA-Z]+-)\d+\b(?![/\\=\.\-])', r'\1X'),
         ]
         
