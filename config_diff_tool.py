@@ -251,16 +251,24 @@ class ConfigDiffTool:
                 
                 has_differences = False
                 
-                if len(unique_values) > 1 or len(key_values) != len(hosts_with_key):
+                # Check for missing files or missing keys - these should always be reported
+                # regardless of hostname normalization since they represent structural differences
+                has_missing_files_or_keys = len(key_values) != len(hosts_with_key)
+                
+                if len(unique_values) > 1 or has_missing_files_or_keys:
                     # There are potential differences
                     if self.ignore_hostnames:
-                        # Check if differences are only due to hostnames
-                        actual_values = list(unique_values)
-                        if self._values_differ_ignoring_hostnames(actual_values):
+                        # If there are missing files or keys, always report the difference
+                        if has_missing_files_or_keys:
                             has_differences = True
                         else:
-                            # Differences are only due to hostname format variations, skip this entry
-                            self.logger.debug(f"Skipping hostname format variation difference for {file_name}:{key}")
+                            # Only check hostname normalization if all hosts have actual values
+                            actual_values = list(unique_values)
+                            if self._values_differ_ignoring_hostnames(actual_values):
+                                has_differences = True
+                            else:
+                                # Differences are only due to hostname format variations, skip this entry
+                                self.logger.debug(f"Skipping hostname format variation difference for {file_name}:{key}")
                     else:
                         has_differences = True
                 
