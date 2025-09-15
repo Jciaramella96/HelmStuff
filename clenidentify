@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+import os
+import argparse
+import platform
+import fnmatch
+
+
+def human_readable_size(size_bytes):
+    """Convert bytes to human-readable string."""
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    elif size_bytes < 1024 ** 2:
+        return f"{size_bytes / 1024:.2f}KB"
+    elif size_bytes < 1024 ** 3:
+        return f"{size_bytes / (1024 ** 2):.2f}MB"
+    else:
+        return f"{size_bytes / (1024 ** 3):.2f}GB"
+
+
+def find_large_files(target_dir: str, size_threshold_mb: int):
+    """
+    Return absolute paths of files ≥ size_threshold_mb in target_dir recursively.
+    Each item is a tuple: (filepath, size_in_bytes)
+    """
+    large_files = []
+    size_threshold_bytes = size_threshold_mb * 1024 * 1024
+
+    for root, dirs, files in os.walk(target_dir):
+        for name in files:
+            filepath = os.path.join(root, name)
+            try:
+                size = os.path.getsize(filepath)
+                if size >= size_threshold_bytes:
+                    large_files.append((os.path.abspath(filepath), size))
+            except (FileNotFoundError, PermissionError):
+                continue
+    return large_files
+
+
+def load_approved_list(approved_file: str):
+    """Load absolute paths or wildcard patterns from the approved list file (one per line)."""
+    if not os.path.exists(approved_file):
+        print(f"[WARN] Approved list file '{approved_file}' not found.")
+        return set()
+    with open(approved_file, "r") as f:
+        return {line.strip() for line in f if line.strip() and not line.startswith("#")}
+
+
+def filter_deletable_files(found_files, approved_patterns):
+    """Return only files that match an approved absolute path or wildcard pattern."""
+    deletable = []
+    for f, size in found_files:
+        for pattern in approved_patterns:
+            if fnmatch.fnmatch(f, pattern):
+                deletable.append((f, size))
+                break
+    return deletable
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Disk cleanup script (recursive, absolute paths, shows sizes)")
+    parser.add_argument("target_dir", help="Target directory to scan recursively")
+    parser.add_argument("approved_list", help="File containing approved absolute paths or wildcard patterns")
+    parser.add_argument("--threshold", type=int, default=500,
+                        help="File size threshold in MB (default: 500MB)")
+    parser.add_argument("--delete", action="store_true", help="Actually delete files instead of dry run")
+    args = parser.parse_args()
+
+    system_type = platform.system()
+    print(f"[INFO] Running on {system_type} system")
+
+    # Step 1: Find all large files recursively
+    found_files = find_large_files(args.target_dir, args.threshold)
+    print(f"\n[INFO] Found {len(found_files)} files ≥ {args.threshold}MB in {args.target_dir} and subdirectories:")
+
+    for f, size in found_files:
+        print(f"  {f} ({human_readable_size(size)})")
+
+    # Step 2: Load approved patterns
+    approved_patterns = load_approved_list(args.approved_list)
+
+    # Step 3: Filter files eligible for deletion
+    deletable_files = filter_deletable_files(found_files, approved_patterns)
+
+    if not deletable_files:
+        print("\n[INFO] No files eligible for deletion based on approved list.")
+    else:
+        print("\n[INFO] Files eligible for deletion (match approved list):")
+        for f, size in deletable_files:
+            print(f"  {f} ({human_readable_size(size)})")
+
+    # Step 4: Delete files if requested
+    if args.delete:
+        print("\n[INFO] Deleting files...")
+        for f, size in deletable_files:
+            try:
+                os.remove(f)
+                print(f"[DELETED] {f} ({human_readable_size(size)})")
+            except Exception as e:
+                print(f"[ERROR] Could not delete {f}: {e}")
+    else:
+        print("\n[INFO] Dry run mode: No files deleted.")
+
+
+if __name__ == "__main__":
+    main()
