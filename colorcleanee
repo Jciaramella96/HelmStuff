@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+import os
+import argparse
+import fnmatch
+import datetime
+import shutil
+
+# ANSI color codes
+class Colors:
+    CYAN = "\033[96m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    RESET = "\033[0m"
+
+# Logging functions with colors
+def info(msg): print(f"{Colors.CYAN}[INFO]{Colors.RESET} {msg}")
+def warn(msg): print(f"{Colors.YELLOW}[WARN]{Colors.RESET} {msg}")
+def error(msg): print(f"{Colors.RED}[ERROR]{Colors.RESET} {msg}")
+def deleted(msg): print(f"{Colors.GREEN}[DELETED]{Colors.RESET} {msg}")
+
+# --- Utilities ---
+def get_size(path):
+    """Return size of file or directory in bytes."""
+    total_size = 0
+    if os.path.isfile(path):
+        return os.path.getsize(path)
+    for dirpath, _, filenames in os.walk(path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            try:
+                total_size += os.path.getsize(fp)
+            except OSError:
+                pass
+    return total_size
+
+def scan_large_items(target_dir, threshold_mb):
+    """Scan recursively for files and directories over threshold MB."""
+    threshold_bytes = threshold_mb * 1024 * 1024
+    large_items = []
+
+    for root, dirs, files in os.walk(target_dir):
+        for f in files:
+            path = os.path.join(root, f)
+            try:
+                if os.path.getsize(path) >= threshold_bytes:
+                    large_items.append(path)
+            except OSError:
+                pass
+        for d in dirs:
+            path = os.path.join(root, d)
+            size = get_size(path)
+            if size >= threshold_bytes:
+                large_items.append(path)
+    return large_items
+
+def load_list(file_path: str):
+    """Load lines from a text file into a set (skip blanks/comments)."""
+    if not os.path.exists(file_path):
+        warn(f"File '{file_path}' not found.")
+        return set()
+    with open(file_path, "r") as f:
+        return {line.strip() for line in f if line.strip() and not line.startswith("#")}
+
+def filter_deletable_files(found_files, approved_patterns):
+    """Return only files/directories matching approved absolute paths or wildcards."""
+    deletable = []
+    for f in found_files:
+        for pattern in approved_patterns:
+            if fnmatch.fnmatch(f, pattern):
+                deletable.append(f)
+                break
+    return deletable
+
+def cleanup_old_files(base_dir, days, do_delete):
+    """Remove files older than N days inside base_dir."""
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
+    deleted_files = []
+    if not os.path.exists(base_dir):
+        return deleted_files
+    for root, _, files in os.walk(base_dir):
+        for fname in files:
+            path = os.path.join(root, fname)
+            try:
+                mtime = datetime.datetime.fromtimestamp(os.path.getmtime(path))
+                if mtime < cutoff:
+                    deleted_files.append(path)
+                    if do_delete:
+                        os.remove(path)
+            except Exception as e:
+                error(f"Could not process {path}: {e}")
+    return deleted_files
+
+# --- Main ---
+def main():
+    parser = argparse.ArgumentParser(description="Unified disk cleanup script")
+    parser.add_argument("target_dir", help="Target directory to scan recursively")
+    parser.add_argument("--approved-list", required=True,
+                        help="File containing approved file paths or wildcard patterns (absolute paths)")
+    parser.add_argument("--threshold", type=int, default=500,
+                        help="Size threshold in MB (default: 500)")
+    parser.add_argument("--retention", type=int, default=7,
+                        help="Delete files older than N days in log/ and report/ (default: 7)")
+    parser.add_argument("--delete", action="store_true",
+                        help="Actually delete files instead of dry run")
+    args = parser.parse_args()
+
+    summary = {
+        "large_found": 0,
+        "large_matched": 0,
+        "large_deleted": 0,
+        "retention_found": 0,
+        "retention_deleted": 0,
+    }
+
+    # --- Large files/dirs ---
+    info(f"Scanning '{args.target_dir}' for items over {args.threshold}MB...")
+    found_items = scan_large_items(args.target_dir, args.threshold)
+    summary["large_found"] = len(found_items)
+
+    if found_items:
+        info(f"Found {len(found_items)} large files/directories:")
+        for item in found_items:
+            size_mb = get_size(item) / (1024 * 1024)
+            print(f"  {item} ({size_mb:.1f} MB)")
+    else:
+        info("No large files or directories found.")
+
+    approved_patterns = load_list(args.approved_list)
+    deletable_items = filter_deletable_files(found_items, approved_patterns)
+    summary["large_matched"] = len(deletable_items)
+
+    if deletable_items:
+        info("Items eligible for deletion (approved list matched):")
+        for f in deletable_items:
+            print(f"  {f}")
+
+        if args.delete:
+            info("Deleting approved large items...")
+            for f in deletable_items:
+                try:
+                    if os.path.isfile(f):
+                        os.remove(f)
+                    elif os.path.isdir(f):
+                        shutil.rmtree(f)
+                    deleted(f)
+                    summary["large_deleted"] += 1
+                except Exception as e:
+                    error(f"Could not delete {f}: {e}")
+        else:
+            info("Dry run: No large items deleted.")
+    else:
+        info("No large items matched approved list.")
+
+    # --- Retention cleanup (log + report) ---
+    osi_env = os.environ.get("OSI")
+    if osi_env:
+        info(f"Running retention cleanup (older than {args.retention} days)...")
+        for subdir in ["log", "report"]:
+            base_dir = os.path.join(osi_env, subdir)
+            old_files = cleanup_old_files(base_dir, args.retention, args.delete)
+            summary["retention_found"] += len(old_files)
+
+            if old_files:
+                info(f"Files in {base_dir} eligible for deletion (>{args.retention} days old):")
+                for f in old_files:
+                    print(f"  {f}")
+                if args.delete:
+                    summary["retention_deleted"] += len(old_files)
+                    info(f"Deleted {len(old_files)} files from {base_dir}")
+                else:
+                    info(f"Dry run: {len(old_files)} old files listed, none deleted.")
+            else:
+                info(f"No old files found in {base_dir}")
+    else:
+        warn("OSI environment variable not set, skipping log/report cleanup.")
+
+    # --- Summary Report with Colors ---
+    print("\n" + "=" * 40)
+    info("SUMMARY REPORT")
+    print("=" * 40)
+    # Large items
+    print(f"Large items found:    {Colors.CYAN}{summary['large_found']}{Colors.RESET}")
+    if args.delete:
+        print(f"Matched for deletion: {Colors.GREEN}{summary['large_matched']}{Colors.RESET}")
+        print(f"Large items deleted:  {Colors.GREEN}{summary['large_deleted']}{Colors.RESET}")
+    else:
+        print(f"Matched for deletion: {Colors.YELLOW}{summary['large_matched']}{Colors.RESET}")
+        print(f"Large items deleted:  {Colors.YELLOW}{summary['large_deleted']}{Colors.RESET}")
+    # Retention files
+    print(f"Old files found:      {Colors.CYAN}{summary['retention_found']}{Colors.RESET}")
+    if args.delete:
+        print(f"Old files deleted:    {Colors.GREEN}{summary['retention_deleted']}{Colors.RESET}")
+    else:
+        print(f"Old files deleted:    {Colors.YELLOW}{summary['retention_deleted']}{Colors.RESET}")
+    print("=" * 40)
+
+
+if __name__ == "__main__":
+    main()
