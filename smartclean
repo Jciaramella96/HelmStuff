@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+import os
+import argparse
+import platform
+import fnmatch
+import shutil
+
+
+def human_readable_size(size_bytes):
+    """Convert bytes to human-readable string."""
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    elif size_bytes < 1024 ** 2:
+        return f"{size_bytes / 1024:.2f}KB"
+    elif size_bytes < 1024 ** 3:
+        return f"{size_bytes / (1024 ** 2):.2f}MB"
+    else:
+        return f"{size_bytes / (1024 ** 3):.2f}GB"
+
+
+def get_directory_size(directory):
+    """Return total size of all files in a directory recursively."""
+    total = 0
+    for root, dirs, files in os.walk(directory):
+        for name in files:
+            filepath = os.path.join(root, name)
+            try:
+                total += os.path.getsize(filepath)
+            except (FileNotFoundError, PermissionError):
+                continue
+    return total
+
+
+def find_large_files(target_dir: str, size_threshold_mb: int):
+    """
+    Return absolute paths of files ≥ size_threshold_mb.
+    Each item is a tuple: (path, size, type="file")
+    """
+    large_files = []
+    size_threshold_bytes = size_threshold_mb * 1024 * 1024
+
+    for root, dirs, files in os.walk(target_dir):
+        for name in files:
+            filepath = os.path.join(root, name)
+            try:
+                size = os.path.getsize(filepath)
+                if size >= size_threshold_bytes:
+                    large_files.append((os.path.abspath(filepath), size, "file"))
+            except (FileNotFoundError, PermissionError):
+                continue
+
+    return large_files
+
+
+def find_large_directories(target_dir: str, size_threshold_mb: int):
+    """
+    Return absolute paths of directories ≥ size_threshold_mb.
+    Each item is a tuple: (path, size, type="dir")
+    """
+    large_dirs = []
+    size_threshold_bytes = size_threshold_mb * 1024 * 1024
+
+    for root, dirs, files in os.walk(target_dir):
+        for d in dirs:
+            dir_path = os.path.abspath(os.path.join(root, d))
+            size = get_directory_size(dir_path)
+            if size >= size_threshold_bytes:
+                large_dirs.append((dir_path, size, "dir"))
+
+    return large_dirs
+
+
+def load_approved_list(approved_file: str):
+    """Load absolute paths or wildcard patterns from the approved list file (one per line)."""
+    if not os.path.exists(approved_file):
+        print(f"[WARN] Approved list file '{approved_file}' not found.")
+        return set()
+    with open(approved_file, "r") as f:
+        return {line.strip() for line in f if line.strip() and not line.startswith("#")}
+
+
+def filter_deletable_items(found_items, approved_patterns):
+    """Return only items (files/dirs) that match an approved absolute path or wildcard pattern."""
+    deletable = []
+    for path, size, item_type in found_items:
+        for pattern in approved_patterns:
+            if fnmatch.fnmatch(path, pattern):
+                deletable.append((path, size, item_type))
+                break
+    return deletable
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Disk cleanup script (files + dirs, recursive, wildcards supported)")
+    parser.add_argument("target_dir", help="Target directory to scan recursively")
+    parser.add_argument("approved_list", help="File containing approved absolute paths or wildcard patterns")
+    parser.add_argument("--threshold", type=int, default=500,
+                        help="Size threshold in MB (default: 500MB)")
+    parser.add_argument("--delete", action="store_true", help="Actually delete items instead of dry run")
+    args = parser.parse_args()
+
+    system_type = platform.system()
+    print(f"[INFO] Running on {system_type} system")
+
+    # Step 1: Find all large files
+    found_files = find_large_files(args.target_dir, args.threshold)
+
+    # Step 2: Find all large directories
+    found_dirs = find_large_directories(args.target_dir, args.threshold)
+
+    print(f"\n[INFO] Found {len(found_files)} files ≥ {args.threshold}MB:")
+    for path, size, item_type in found_files:
+        print(f"  {path} ({human_readable_size(size)}) [{item_type}]")
+
+    print(f"\n[INFO] Found {len(found_dirs)} directories ≥ {args.threshold}MB:")
+    for path, size, item_type in found_dirs:
+        print(f"  {path} ({human_readable_size(size)}) [{item_type}]")
+
+    # Step 3: Load approved patterns
+    approved_patterns = load_approved_list(args.approved_list)
+
+    # Step 4: Filter files + dirs eligible for deletion
+    deletable_items = filter_deletable_items(found_files + found_dirs, approved_patterns)
+
+    if not deletable_items:
+        print("\n[INFO] No files or directories eligible for deletion based on approved list.")
+    else:
+        print("\n[INFO] Items eligible for deletion (match approved list):")
+        for path, size, item_type in deletable_items:
+            print(f"  {path} ({human_readable_size(size)}) [{item_type}]")
+
+    # Step 5: Delete items if requested
+    if args.delete:
+        print("\n[INFO] Deleting items...")
+        for path, size, item_type in deletable_items:
+            try:
+                if item_type == "file":
+                    os.remove(path)
+                else:
+                    shutil.rmtree(path)
+                print(f"[DELETED] {path} ({human_readable_size(size)}) [{item_type}]")
+            except Exception as e:
+                print(f"[ERROR] Could not delete {path}: {e}")
+    else:
+        print("\n[INFO] Dry run mode: No items deleted.")
+
+
+if __name__ == "__main__":
+    main()
