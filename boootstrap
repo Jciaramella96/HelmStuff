@@ -1,0 +1,60 @@
+import os
+import platform
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+def run_cmd(cmd, cwd=None):
+    """Run a shell command and return output, raising if error."""
+    print(f"[INFO] Running: {cmd}")
+    result = subprocess.run(cmd, cwd=cwd, shell=True, text=True,
+                            capture_output=True)
+    if result.returncode != 0:
+        print(f"[ERROR] Command failed: {cmd}\n{result.stderr}")
+        sys.exit(result.returncode)
+    return result.stdout.strip()
+
+def get_hostname():
+    """Return the machine's hostname (cross-platform)."""
+    return socket.gethostname()
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python bootstrap_git_repo.py <repo-url>")
+        sys.exit(1)
+
+    repo_url = sys.argv[1]
+    repo_name = Path(repo_url).stem.replace(".git", "")
+    hostname = get_hostname()
+
+    print(f"[INFO] Hostname detected: {hostname}")
+    print(f"[INFO] Target repo: {repo_name}")
+
+    # Clone repo if not already cloned
+    if not Path(repo_name).exists():
+        run_cmd(f"git clone --depth 1 --filter=blob:none --sparse {repo_url} {repo_name}")
+
+    repo_path = Path(repo_name)
+
+    # Enter repo directory
+    os.chdir(repo_path)
+
+    # Configure sparse-checkout for this hostname folder
+    run_cmd(f"git sparse-checkout set {hostname}")
+
+    # Ensure hostname folder exists
+    host_dir = repo_path / hostname
+    if not host_dir.exists():
+        host_dir.mkdir(parents=True)
+        run_cmd(f"git add {hostname}")
+        run_cmd(f'git commit -m "Initialize folder for {hostname}"')
+        run_cmd("git push origin main")
+        print(f"[INFO] Created and pushed new folder: {hostname}")
+    else:
+        print(f"[INFO] Folder already exists for {hostname}, no init commit needed.")
+
+    print("[INFO] Bootstrap complete. Repo ready.")
+
+if __name__ == "__main__":
+    main()
