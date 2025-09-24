@@ -1,0 +1,30 @@
+import subprocess
+
+def get_mongo_identifiers():
+    """
+    Runs `ps -ef | grep mongo`, extracts identifiers from mongod process names,
+    and returns a set of unique values after the underscore.
+    """
+    # Run ps -ef
+    result = subprocess.run(
+        ["ps", "-ef"], capture_output=True, text=True
+    )
+
+    lines = result.stdout.splitlines()
+    identifiers = set()  # using set to store unique values
+
+    for line in lines:
+        if "mongod" in line and "grep" not in line:  # skip the grep process itself
+            parts = line.split()
+            for token in parts:
+                if "mongod" in token and "_" in token:
+                    identifiers.add(token.split("_", 1)[1])
+
+    return identifiers
+
+
+if __name__ == "__main__":
+    mongo_ids = get_mongo_identifiers()
+    print("Unique mongod identifiers found:")
+    for mid in mongo_ids:
+        print("-", mid)
