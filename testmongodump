@@ -1,0 +1,58 @@
+import subprocess
+import re
+
+def get_mongo_identifiers():
+    """
+    Runs `ps -ef`, extracts config identifiers from mongod process lines,
+    and returns unique values found between 'mongo_' and '.conf'.
+    """
+    result = subprocess.run(
+        ["ps", "-ef"], capture_output=True, text=True
+    )
+
+    lines = result.stdout.splitlines()
+    identifiers = set()
+
+    for line in lines:
+        if "mongod" in line and "grep" not in line:
+            parts = line.split()
+            for token in parts:
+                if token.endswith(".conf") and "mongo_" in token:
+                    match = re.search(r"mongo_(.+)\.conf", token)
+                    if match:
+                        identifiers.add(match.group(1))
+
+    return sorted(identifiers)
+
+
+def build_mongodump_cmd(mongoname, hostname, username, password):
+    """
+    Build the mongodump command for a given Mongo instance.
+    Replace the placeholders with actual values.
+    """
+    return [
+        "mongodump",
+        "--host", f"{hostname}:27017",
+        "-u", username,
+        "-p", password,
+        "--out", f"/opt/osi/osi_cust/data/ADMS_MONGO_DUMPS/{mongoname}_mongo_dump/{mongoname}",
+        "--gzip",
+        "--ssl",
+        f"--sslPEMKeyFile=/opt/osi/monarch/sys/rc/ssl/{hostname}.pem",
+        "--sslCAFile=/opt/osi/monarch/sys/rc/ssl/ca-chain.cert.pem"
+    ]
+
+
+if __name__ == "__main__":
+    hostname = "myserver"       # 🔹 replace with your host
+    username = "myuser"         # 🔹 replace with your Mongo username
+    password = "mypassword"     # 🔹 replace with your Mongo password
+
+    mongo_ids = get_mongo_identifiers()
+    print("Unique mongod identifiers found:", mongo_ids)
+
+    for mid in mongo_ids:
+        cmd = build_mongodump_cmd(mid, hostname, username, password)
+        print(f"\n[INFO] Starting dump for {mid} ...")
+        subprocess.run(cmd, check=True)   # waits until finished
+        print(f"[INFO] Finished dump for {mid}")
