@@ -1,0 +1,23 @@
+import subprocess
+
+# Run ps -ef | grep mongo
+result = subprocess.run(
+    ["ps", "-ef"], capture_output=True, text=True
+)
+
+# Split into lines and filter
+lines = result.stdout.splitlines()
+
+# Prepare array
+trimmed = []
+
+for line in lines:
+    if "mongod" in line:  # only consider lines with "mongod"
+        parts = line.split()
+        # process each token in the line
+        for token in parts:
+            if "mongod" in token and "_" in token:
+                # keep everything after the first underscore
+                trimmed.append(token.split("_", 1)[1])
+
+print(trimmed)
