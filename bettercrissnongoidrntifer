@@ -1,0 +1,65 @@
+import subprocess
+import platform
+import re
+
+def find_mongod_identifiers():
+    """
+    Finds mongod identifiers by parsing running processes.
+    Works on Linux (ps -ef) and Windows (wmic).
+    """
+    identifiers = set()
+    system = platform.system()
+
+    try:
+        if system == "Windows":
+            # WMIC gives full command lines for mongod.exe
+            cmd = ["wmic", "process", "where", "name='mongod.exe'", "get", "CommandLine", "/value"]
+            result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+            output = result.stdout
+        else:  # Linux/Unix/macOS
+            cmd = ["ps", "-ef"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            output = result.stdout
+
+        # Look for mongo_<id>.conf in command lines
+        for line in output.splitlines():
+            match = re.search(r"mongo_(.+?)\.conf", line)
+            if match:
+                identifiers.add(match.group(1))
+
+    except Exception as e:
+        print(f"[ERROR] Failed to capture processes: {e}")
+
+    return sorted(identifiers)
+
+
+def run_dump_for_identifier(identifier: str):
+    """
+    Runs a dump command for a given MongoDB identifier.
+    Replace with actual mongodump command.
+    """
+    dump_cmd = f"echo Running dump for {identifier}"  
+    print(f"[INFO] Executing: {dump_cmd}")
+    result = subprocess.run(dump_cmd, shell=True)
+
+    if result.returncode == 0:
+        print(f"[SUCCESS] Dump completed for {identifier}")
+    else:
+        print(f"[ERROR] Dump failed for {identifier} (exit code {result.returncode})")
+
+
+def main():
+    identifiers = find_mongod_identifiers()
+
+    if not identifiers:
+        print("[WARN] No mongod identifiers found.")
+        return
+
+    print("[INFO] Unique mongod identifiers found:", identifiers)
+
+    for identifier in identifiers:
+        run_dump_for_identifier(identifier)
+
+
+if __name__ == "__main__":
+    main()
