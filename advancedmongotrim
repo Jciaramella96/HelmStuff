@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+import subprocess
+import re
+import os
+import argparse
+from subprocess import CalledProcessError
+
+# Regex to remove ANSI color / escape sequences
+ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
+
+# Capture everything between "mongo_" and ".conf" (keeps underscores)
+MONGO_CONF_RE = re.compile(r'mongo_([^/\s]+?)\.conf', re.IGNORECASE)
+
+
+def strip_ansi(s: str) -> str:
+    return ANSI_RE.sub('', s)
+
+
+def get_from_ps(verbose: bool = False):
+    """
+    Use ps to list full command lines and extract mongo_<id>.conf occurrences.
+    """
+    try:
+        proc = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True, check=True)
+    except Exception as exc:
+        if verbose:
+            print("[debug] ps command failed:", exc)
+        return set()
+
+    text = strip_ansi(proc.stdout)
+    ids = set()
+
+    for i, line in enumerate(text.splitlines(), start=1):
+        if "grep" in line and "--color" in line:
+            # optional heuristic: skip obvious grep-with-color lines
+            continue
+        # find all mongo_... .conf occurrences in the full line
+        for m in MONGO_CONF_RE.findall(line):
+            ids.add(m)
+            if verbose:
+                print(f"[debug][ps   ] line {i}: matched -> {m}")
+
+    return ids
+
+
+def get_from_proc(verbose: bool = False):
+    """
+    Fallback: scan /proc/<pid>/cmdline for processes that include 'mongo' and a mongo_*.conf
+    More robust (not subject to ps formatting) but may be restricted by permissions.
+    """
+    ids = set()
+    proc_root = "/proc"
+    if not os.path.isdir(proc_root):
+        if verbose:
+            print("[debug][proc ] /proc not available")
+        return ids
+
+    for entry in os.listdir(proc_root):
+        if not entry.isdigit():
+            continue
+        pid = entry
+        path = os.path.join(proc_root, pid, "cmdline")
+        try:
+            with open(path, "rb") as f:
+                raw = f.read()
+            # cmdline uses NUL separators; convert to spaces for regex
+            cmdline = raw.replace(b'\x00', b' ').decode(errors='ignore')
+            if "mongo" not in cmdline.lower():
+                continue
+            cmdline = strip_ansi(cmdline)
+            for m in MONGO_CONF_RE.findall(cmdline):
+                ids.add(m)
+                if verbose:
+                    print(f"[debug][proc ] pid {pid}: matched -> {m}")
+        except Exception:
+            # ignore unreadable /proc entries (permission, vanished, etc.)
+            continue
+    return ids
+
+
+def get_mongo_identifiers(verbose: bool = False):
+    # Try ps first (works in most environments)
+    ids = get_from_ps(verbose=verbose)
+    if ids:
+        if verbose:
+            print(f"[debug] identifiers from ps: {sorted(ids)}")
+        return sorted(ids)
+
+    # Fallback to /proc scanning
+    ids = get_from_proc(verbose=verbose)
+    if verbose:
+        print(f"[debug] identifiers from /proc: {sorted(ids)}")
+    return sorted(ids)
+
+
+def build_mongodump_cmd(mongoname: str, hostname: str, username: str, password: str):
+    outdir = f"/opt/osi/osi_cust/data/ADMS_MONGO_DUMPS/{mongoname}_mongo_dump/{mongoname}"
+    return [
+        "mongodump",
+        "--host", f"{hostname}:27017",
+        "-u", username,
+        "-p", password,
+        "--out", outdir,
+        "--gzip",
+        "--ssl",
+        f"--sslPEMKeyFile=/opt/osi/monarch/sys/rc/ssl/{hostname}.pem",
+        "--sslCAFile=/opt/osi/monarch/sys/rc/ssl/ca-chain.cert.pem"
+    ]
+
+
+def main():
+    p = argparse.ArgumentParser(description="Find mongo_<id>.conf instances and run mongodump sequentially.")
+    p.add_argument("--hostname", default="myserver")
+    p.add_argument("--username", default="myuser")
+    p.add_argument("--password", default="mypassword")
+    p.add_argument("--dry-run", action="store_true", help="Print commands but do not execute")
+    p.add_argument("--debug", "-d", action="store_true", help="Verbose debug output")
+    args = p.parse_args()
+
+    ids = get_mongo_identifiers(verbose=args.debug)
+    if not ids:
+        print("No mongo identifiers found. Try running with --debug to see scan details.")
+        return
+
+    print("Unique mongod identifiers found:", ids)
+
+    successes = []
+    failures = []
+
+    for mongoname in ids:
+        cmd = build_mongodump_cmd(mongoname, args.hostname, args.username, args.password)
+        print(f"\n[INFO] Starting dump for {mongoname} ...")
+        if args.debug or args.dry_run:
+            print("[cmd ]", " ".join(cmd))
+        if args.dry_run:
+            print("[INFO] dry-run: skipping execution")
+            successes.append(mongoname)
+            continue
+
+        try:
+            subprocess.run(cmd, check=True)
+            print(f"[INFO] Finished dump for {mongoname}")
+            successes.append(mongoname)
+        except CalledProcessError as ex:
+            print(f"[ERROR] mongodump failed for {mongoname} (rc={ex.returncode})")
+            failures.append((mongoname, ex.returncode))
+
+    print("\n=== Summary ===")
+    print("Succeeded:", successes)
+    print("Failed   :", failures)
+
+
+if __name__ == "__main__":
+    main()
