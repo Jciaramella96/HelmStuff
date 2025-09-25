@@ -1,0 +1,63 @@
+import psutil
+import re
+import subprocess
+
+def find_mongod_identifiers():
+    """
+    Scans all running processes and extracts unique mongod identifiers
+    based on config files named like mongo_<id>.conf.
+    
+    Works on both Linux and Windows using psutil.
+    """
+    identifiers = set()
+
+    for proc in psutil.process_iter(attrs=['name', 'cmdline']):
+        try:
+            # Check if process is mongod
+            if proc.info['name'] and 'mongod' in proc.info['name'].lower():
+                cmdline = " ".join(proc.info['cmdline']) if proc.info['cmdline'] else ""
+                
+                # Look for config files like mongo_<id>.conf
+                match = re.search(r"mongo_(.+?)\.conf", cmdline)
+                if match:
+                    identifiers.add(match.group(1))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    return sorted(identifiers)
+
+
+def run_dump_for_identifier(identifier: str):
+    """
+    Runs a dump command for a given MongoDB identifier.
+    Replace <dump_cmd> with the real dump tool command.
+    """
+    dump_cmd = f"echo Running dump for {identifier}"  
+    # Example real command might look like:
+    # dump_cmd = f"/opt/mongodb/bin/mongodump --config /opt/osi/monarch/sys/rc/mongo_{identifier}.conf --out /backups/{identifier}"
+    
+    print(f"[INFO] Executing: {dump_cmd}")
+    result = subprocess.run(dump_cmd, shell=True)
+    
+    if result.returncode == 0:
+        print(f"[SUCCESS] Dump completed for {identifier}")
+    else:
+        print(f"[ERROR] Dump failed for {identifier} (exit code {result.returncode})")
+
+
+def main():
+    identifiers = find_mongod_identifiers()
+
+    if not identifiers:
+        print("[WARN] No mongod identifiers found.")
+        return
+
+    print("[INFO] Unique mongod identifiers found:", identifiers)
+
+    # Run sequentially
+    for identifier in identifiers:
+        run_dump_for_identifier(identifier)
+
+
+if __name__ == "__main__":
+    main()
