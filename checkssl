@@ -1,0 +1,28 @@
+def get_mongo_ssl1_value(config_file: str) -> str | None:
+    """
+    Reads a config file line by line, looks for a line starting with 'mongo.ssl.1',
+    and returns the value after the '='.
+    
+    Returns:
+        str: The value after '=' if found.
+        None: If no such line exists.
+    """
+    try:
+        with open(config_file, "r") as f:
+            for line in f:
+                # Strip whitespace and skip comments/empty lines
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                if line.startswith("mongo.ssl.1"):
+                    # Split only on the first "="
+                    parts = line.split("=", 1)
+                    if len(parts) == 2:
+                        return parts[1].strip()
+    except FileNotFoundError:
+        print(f"[ERROR] Config file not found: {config_file}")
+    except Exception as e:
+        print(f"[ERROR] Failed to read {config_file}: {e}")
+
+    return None
