@@ -1,0 +1,14 @@
+# replace otheruser with the username you suspect
+OTHER=otheruser
+echo "---- auth logs / sudo / su ----"
+journalctl --since "2 hours ago" | egrep -i "session opened for user $OTHER|su:|sudo:.*USER=$OTHER"
+
+echo "---- sudo exact commands ----"
+journalctl _COMM=sudo --since "2 hours ago" | egrep -i "USER=$OTHER|COMMAND="
+
+echo "---- shell history (if present) ----"
+sudo awk '/^#/{t=$1; sub(/^#/, "", t); getline cmd; print strftime("%F %T", t), cmd} !/^#/{print $0}' /home/$OTHER/.bash_history 2>/dev/null | tail -n 200
+
+echo "---- auditd (if running) ----"
+uid=$(id -u $OTHER)
+ausearch -ua $uid -m USER_CMD --start "$(date --iso-8601=seconds --date='2 hours ago')" -i 2>/dev/null || true
