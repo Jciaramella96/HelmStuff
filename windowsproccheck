@@ -1,0 +1,19 @@
+import subprocess
+
+# Define your keywords
+keywords = ["chrome", "edge", "notepad"]
+
+# Create a PowerShell command string
+pattern = "|".join(keywords)
+ps_cmd = f"Get-Process | Where-Object {{ $_.ProcessName -match '{pattern}' }} | Select-Object -ExpandProperty ProcessName"
+
+# Run the PowerShell command
+result = subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True, text=True)
+
+# Split output into lines and filter out empties
+processes = [p.strip() for p in result.stdout.splitlines() if p.strip()]
+
+# Print results
+for p in processes:
+    print(p)
+print(f"\nTotal matching processes: {len(processes)}")
