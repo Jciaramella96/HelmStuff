@@ -1,0 +1,43 @@
+import re
+import sys
+
+def replace_encrypted_password(filename, old_pw, new_pw):
+    # Regex matches lines like: ENCRYPTED_mongo.password.1 = <encrypted pw>
+    pattern = re.compile(r'^(ENCRYPTED_mongo\.password\.\d+\s*=\s*)(.*)$')
+
+    with open(filename, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    updated_lines = []
+    replacements = 0
+
+    for line in lines:
+        match = pattern.match(line)
+        if match:
+            prefix, current_pw = match.groups()
+            if current_pw.strip() == old_pw:
+                updated_line = f"{prefix}{new_pw}\n"
+                updated_lines.append(updated_line)
+                replacements += 1
+            else:
+                updated_lines.append(line)
+        else:
+            updated_lines.append(line)
+
+    # Write the file back
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.writelines(updated_lines)
+
+    if replacements == 0:
+        print("⚠️  No matching password entries found to replace.")
+    else:
+        print(f"✅ Replaced {replacements} password entr{'y' if replacements == 1 else 'ies'}.")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Usage: python replace_pw.py <filename.jrc> <old_pw> <new_pw>")
+        sys.exit(1)
+
+    filename, old_pw, new_pw = sys.argv[1], sys.argv[2], sys.argv[3]
+    replace_encrypted_password(filename, old_pw, new_pw)
