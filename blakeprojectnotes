@@ -1,0 +1,69 @@
+Project with blake notes:
+1. Database Design & Setup
+	• Requirements Gathering: Understand what data needs to be stored, relationships, and expected queries.
+	• Schema Design: Normalize tables, define indexes, constraints, and relationships.
+	• Technology Choice: SQL (PostgreSQL, MySQL) vs NoSQL (MongoDB, DynamoDB) based on data structure and query patterns.
+	• Implementation: Create tables/collections, seed initial data, configure backups.
+	• Effort: For a simple schema, a few hours to a day; for complex relational models, several days.
+
+2. API Development
+	• Framework Selection: Common choices include Express.js (Node), Flask/FastAPI (Python), Spring Boot (Java).
+	• Endpoints Design: CRUD operations (Create, Read, Update, Delete), authentication, pagination, filtering.
+	• Data Validation & Error Handling: Ensure clean input and robust responses.
+	• Performance Considerations: Caching, indexing, query optimization.
+	• Effort: Basic REST API with 4–6 endpoints can take 1–3 days; complex APIs with auth, rate limiting, and analytics can take weeks.
+
+3. Security & Compliance
+	• Authentication/Authorization: JWT, OAuth, API keys.
+	• Data Protection: Encryption at rest and in transit, secure headers.
+	• Effort: Adds 1–2 days for basic security, more for compliance-heavy environments.
+
+4. Deployment & Scaling
+	• Hosting: Cloud (AWS, Azure, GCP) or on-prem.
+	• CI/CD Pipeline: Automated testing and deployment.
+	• Monitoring: Logging, metrics, alerting.
+	• Effort: Initial setup 1–2 days; ongoing maintenance depends on scale.
+
+
+
+
+
+CREATE TABLE areas (
+  id SERIAL PRIMARY KEY,
+  code VARCHAR UNIQUE -- e.g., ZIP or region zone code
+);
+CREATE TABLE commodities (
+  id SERIAL PRIMARY KEY,
+  code VARCHAR UNIQUE,
+  parent_id INT NULL REFERENCES commodities(id)
+);
+CREATE TABLE tax_rates (
+  id SERIAL PRIMARY KEY,
+  area_id INT REFERENCES areas(id),
+  commodity_id INT REFERENCES commodities(id),
+  rate DECIMAL(5,4),
+  effective_date DATE
+);
+
+From <https://outlook.office.com/hosted/semanticoverview/Users('OID:b388a0b7-c324-4285-b5b2-6fcac0cdd1d0@600d01fc-055f-49c6-868f-3ecfcc791773')?culture=en-US&hostName=Edge&hostClientType=web&sessionId=c2be452f-9587-42d5-8974-300db442cc0f&hostApp=hub&isanonymous=true&worktab=1&webtab=1&referrer=copilot> 
+
+Table
+Description
+areas
+area codes (e.g., ZIP, State)
+commodities
+commodity codes (e.g., UNSPSC, HS)
+tax_rates
+tax rate records per area × commodity code
+tax_jurisdictions
+mapping area code → tax zone or jurisdiction
+tax_lookup (optional)
+hierarchical lookup like CSV example to handle commodity rollups
+
+
+
+Lookup flow:
+	1. Identify area by code (ZIP or state).
+	2. Find exact or hierarchical commodity code match.
+	3. Retrieve applicable rate.
+
