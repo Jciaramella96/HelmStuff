@@ -1,0 +1,88 @@
+# ============================
+# CONFIG
+# ============================
+$org        = "myOrg"
+$project    = "myProject"
+$releaseId  = 1234
+$pat        = "YOUR_PAT_HERE"
+$outFile    = "Release_${releaseId}_TestResults.csv"
+
+# ============================
+# AUTH HEADER
+# ============================
+$base64Auth = [Convert]::ToBase64String(
+    [Text.Encoding]::ASCII.GetBytes(":$pat")
+)
+
+$headers = @{
+    Authorization = "Basic $base64Auth"
+    "Content-Type" = "application/json"
+}
+
+# ============================
+# GET RELEASE (ENV IDs)
+# ============================
+$releaseUrl = "https://vsrm.dev.azure.com/$org/$project/_apis/release/releases/$releaseId?api-version=6.0"
+$release    = Invoke-RestMethod -Uri $releaseUrl -Headers $headers
+
+if (-not $release.environments) {
+    Write-Error "No environments found for release $releaseId"
+    exit 1
+}
+
+# ============================
+# GET TEST RUNS FOR RELEASE
+# ============================
+$runsUrl = "https://dev.azure.com/$org/$project/_apis/test/runs?api-version=6.0"
+$allRuns = Invoke-RestMethod -Uri $runsUrl -Headers $headers
+
+$releaseUri = "vstfs:///Release/Release/$releaseId"
+
+$releaseRuns = $allRuns.value | Where-Object {
+    $_.release.uri -eq $releaseUri
+}
+
+if (-not $releaseRuns) {
+    Write-Error "No test runs found for release $releaseId"
+    exit 1
+}
+
+# ============================
+# GET TEST RESULTS
+# ============================
+$results = @()
+
+foreach ($run in $releaseRuns) {
+    Write-Host "Processing Test Run $($run.id)..."
+
+    $resultsUrl = "https://dev.azure.com/$org/$project/_apis/test/Runs/$($run.id)/results?api-version=6.0"
+    $runResults = Invoke-RestMethod -Uri $resultsUrl -Headers $headers
+
+    foreach ($r in $runResults.value) {
+        $results += [PSCustomObject]@{
+            ReleaseId        = $releaseId
+            Environment      = $run.release.environmentName
+            TestRunId        = $run.id
+            TestCaseId       = $r.testCase.id
+            TestName         = $r.testCaseTitle
+            Outcome          = $r.outcome
+            ErrorMessage     = ($r.errorMessage -replace "`r|`n", " ")
+            StackTrace       = ($r.stackTrace   -replace "`r|`n", " ")
+            StartedDate      = $r.startedDate
+            CompletedDate    = $r.completedDate
+            DurationMs       = $r.durationInMs
+            BuildNumber      = $run.build.number
+            Owner            = $r.owner.displayName
+            AutomatedTest    = $r.automatedTestName
+        }
+    }
+}
+
+# ============================
+# EXPORT TO CSV
+# ============================
+$results |
+    Sort-Object TestRunId, TestName |
+    Export-Csv -Path $outFile -NoTypeInformation -Encoding UTF8
+
+Write-Host "✅ Test results written to $outFile"
