@@ -1,0 +1,101 @@
+# ============================
+# CONFIG
+# ============================
+$org     = "myOrg"
+$project = "myProject"
+$pat     = "YOUR_PAT_HERE"
+
+# From pipeline (or fallback for local testing)
+$releaseId = $env:RELEASE_RELEASEID
+$envId     = $env:RELEASE_ENVIRONMENTID
+
+if (-not $releaseId) { $releaseId = 3331 }
+if (-not $envId)     { $envId     = 12 }
+
+$outFile = "Release_${releaseId}_Env_${envId}_TestResults.csv"
+
+# ============================
+# AUTH
+# ============================
+$base64Auth = [Convert]::ToBase64String(
+    [Text.Encoding]::ASCII.GetBytes(":$pat")
+)
+
+$headers = @{
+    Authorization = "Basic $base64Auth"
+    "Content-Type" = "application/json"
+}
+
+# ============================
+# RESULT SUMMARY BY RELEASE
+# ============================
+$summaryUrl =
+    "https://vstmr.dev.azure.com/$org/$project/_apis/testresults/resultsummarybyrelease" +
+    "?releaseId=$releaseId&releaseEnvId=$envId&api-version=6.0-preview.1"
+
+try {
+    $summary = Invoke-RestMethod -Uri $summaryUrl -Headers $headers -ErrorAction Stop
+}
+catch {
+    Write-Error "Failed to get test result summary: $($_.Exception.Message)"
+    return
+}
+
+if (-not $summary.testRunSummary) {
+    Write-Warning "No test runs found in summary for release $releaseId env $envId"
+    return
+}
+
+# ============================
+# COLLECT TEST RUN IDS
+# ============================
+$runIds = $summary.testRunSummary |
+    Where-Object { $_.testRunId } |
+    Select-Object -ExpandProperty testRunId -Unique
+
+# ============================
+# GET TEST RESULTS PER RUN
+# ============================
+$results = @()
+
+foreach ($runId in $runIds) {
+    Write-Host "Processing Test Run $runId..."
+
+    $resultsUrl =
+        "https://dev.azure.com/$org/$project/_apis/test/Runs/$runId/results?api-version=6.0"
+
+    try {
+        $runResults = Invoke-RestMethod -Uri $resultsUrl -Headers $headers -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Failed to get results for run $runId"
+        continue
+    }
+
+    foreach ($r in $runResults.value) {
+        $results += [PSCustomObject]@{
+            ReleaseId     = $releaseId
+            EnvironmentId = $envId
+            TestRunId     = $runId
+            TestCaseId    = $r.testCase.id
+            TestName      = $r.testCaseTitle
+            Outcome       = $r.outcome
+            ErrorMessage  = ($r.errorMessage -replace "`r|`n", " ")
+            StackTrace    = ($r.stackTrace   -replace "`r|`n", " ")
+            StartedDate   = $r.startedDate
+            CompletedDate = $r.completedDate
+            DurationMs    = $r.durationInMs
+            Owner         = $r.owner.displayName
+            AutomatedTest = $r.automatedTestName
+        }
+    }
+}
+
+# ============================
+# EXPORT CSV
+# ============================
+$results |
+    Sort-Object TestRunId, TestName |
+    Export-Csv -Path $outFile -NoTypeInformation -Encoding UTF8
+
+Write-Host "✅ Test results written to $outFile"
