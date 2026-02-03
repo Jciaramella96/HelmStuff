@@ -1,0 +1,97 @@
+##############################################
+# Azure DevOps – Get Test Results by Time Window
+# Works for Classic Release pipelines
+##############################################
+
+# ===== CONFIG =====
+$org     = "org"
+$project = "project"
+$pat     = "yourPAT"
+
+# IMPORTANT: UTC timestamps
+# 5 hours ahead of EST time.
+#whatever timestamp we use -5 hours from it to get the est time.
+
+
+#$completedAfter  = "2026-01-29T05:00:00Z"
+#$completedBefore = "2026-01-30T00:00:00Z"
+
+
+#ex: above translates to 12am 1/29 to 7pm 1/29
+
+
+#take ADO servers time, add 6 hours.
+#thats how you calculate time frame.s
+
+#ADO server is 1 hour behind.
+#ADO server is 6 hours behind UTC time.
+
+$completedAfter  = "2026-02-03T00:00:00Z"
+$completedBefore = "2026-02-03T08:20:00Z"
+
+# Output file
+$outputCsv = "Release_TestResults.csv"
+
+
+# ===== AUTH HEADER =====
+$base64AuthInfo = [Convert]::ToBase64String(
+    [Text.Encoding]::ASCII.GetBytes(":$pat")
+)
+
+$headers = @{
+    Authorization = "Basic $base64AuthInfo"
+}
+
+
+# ===== QUERY TEST RUNS BY COMPLETION WINDOW ===== 
+$runsUrl = "https://***/$org/$project/_apis/test/runs"  +
+           "?minLastUpdatedDate=$completedAfter" +
+           "&maxLastUpdatedDate=$completedBefore"  +
+           "&api-version=6.0"
+
+Write-Host "Querying test runs..."
+$runsResponse = Invoke-RestMethod -Uri $runsUrl -Headers $headers -Method Get 
+
+
+# ===== FILTER COMPLETED + AUTOMATED RUNS =====
+$completedRuns = $runsResponse.value | Where-Object {
+    $_.state -eq "Completed" -and
+    $_.isAutomated -eq $true
+}
+
+Write-Host "Found $($completedRuns.Count) completed automated test runs."
+
+
+# ===== PULL TEST RESULTS PER RUN =====
+$allResults = @()
+
+foreach ($run in $completedRuns) {
+
+    Write-Host "Processing RunId $($run.id) | $($run.name)"
+
+    $resultsUrl = "https://***/$org/$project/_apis/test/runs/$($run.id)/results?api-version=6.0"
+
+    $resultsResponse = Invoke-RestMethod -Uri $resultsUrl -Headers $headers -Method Get
+
+    foreach ($result in $resultsResponse.value) {
+        $allResults += [PSCustomObject]@{
+            RunId         = $run.id
+            RunName       = $run.name
+            CompletedDate = $run.completedDate
+            TestName      = $result.testCaseTitle
+            Outcome       = $result.outcome
+            DurationMs    = $result.durationInMs
+            ErrorMessage  = $result.errorMessage
+            StackTrace    = $result.stackTrace
+        }
+    }
+}
+
+
+# ===== EXPORT RESULTS =====
+if ($allResults.Count -gt 0) {
+    $allResults | Export-Csv $outputCsv -NoTypeInformation
+    Write-Host "Test results exported to $outputCsv"
+} else {
+    Write-Warning "No test results found in the specified time window."
+}
